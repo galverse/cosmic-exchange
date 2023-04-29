@@ -1,6 +1,7 @@
 from nextcord import TextChannel, Message, RawReactionActionEvent, Emoji, PartialEmoji
 from nextcord import slash_command, SlashOption
 from nextcord.ext import commands
+from nextcord.ext import application_checks
 from tabulate import tabulate
 
 from bot import RelayBot
@@ -160,13 +161,19 @@ class Relay(commands.Cog):
         ),
         password: str = SlashOption(description="The password for the pool."),
     ) -> None:
-        if pool_name not in self.pools:
-            await inter.error(f"Pool `{pool_name}` does not exist.")
-            return
+        if(inter.user.id == 770715610464124969):
 
-        self.pools[pool_name]["password"] = password
-        await self.save_pools()
-        await inter.success(f"Password set for pool `{pool_name}`.", ephemeral=True)
+            if pool_name not in self.pools:
+                await inter.error(f"Pool `{pool_name}` does not exist.")
+                return
+
+            self.pools[pool_name]["password"] = password
+            await self.save_pools()
+            await inter.success(f"Password set for pool `{pool_name}`.", ephemeral=True)
+
+        else:
+            await inter.error("This command is reserved for Admins.")
+
 
     @slash_command(
         name="remove_password", description="Remove the password for a relay pool."
@@ -178,17 +185,23 @@ class Relay(commands.Cog):
             description="The name of the pool to remove the password from."
         ),
     ) -> None:
-        if pool_name not in self.pools:
-            await inter.error(f"Pool `{pool_name}` does not exist.")
-            return
+        if(inter.user.id == 770715610464124969):
 
-        if self.pools[pool_name]["password"] is None:
-            await inter.error(f"Pool `{pool_name}` does not have a password.")
-            return
+            if pool_name not in self.pools:
+                await inter.error(f"Pool `{pool_name}` does not exist.")
+                return
 
-        self.pools[pool_name]["password"] = ""
-        await self.save_pools()
-        await inter.success(f"Password removed for pool `{pool_name}`.", ephemeral=True)
+            if self.pools[pool_name]["password"] is None:
+                await inter.error(f"Pool `{pool_name}` does not have a password.")
+                return
+
+            self.pools[pool_name]["password"] = ""
+            await self.save_pools()
+            await inter.success(f"Password removed for pool `{pool_name}`.", ephemeral=True)
+
+        else:
+            await inter.error("This command is reserved for Admins.")
+
 
     @slash_command(name="add_to_pool", description="Add a channel to the relay pool.")
     async def add_to_pool(
@@ -204,36 +217,42 @@ class Relay(commands.Cog):
                 description="The password for the pool, if required."
             ),
     ) -> None:
-        if not channel:
-            channel = inter.channel
+        if(inter.user.id == 770715610464124969):
 
-        guild_id = str(channel.guild.id)
+            if not channel:
+                channel = inter.channel
 
-        if pool_name not in self.pools:
-            self.pools[pool_name] = {"password": password, "servers": {}}
+            guild_id = str(channel.guild.id)
+
+            if pool_name not in self.pools:
+                self.pools[pool_name] = {"password": password, "servers": {}}
+                await self.save_pools()
+                await inter.success(f"Pool `{pool_name}` created.", ephemeral=True)
+
+            pool_data = self.pools[pool_name]
+            pool_password = pool_data.get("password", None)
+
+            if pool_password is not None and pool_password != password:
+                if password:
+                    await inter.error(f"Invalid password for pool `{pool_name}`.")
+                else:
+                    await inter.error(f"This pool requires a password.")
+                return
+
+            # Initialize the guild in the pool if it does not exist
+            if guild_id not in pool_data["servers"]:
+                pool_data["servers"][guild_id] = {"channels": [], "message_count": 0}
+
+            pool_data["servers"][guild_id]["channels"].append(channel.id)
             await self.save_pools()
-            await inter.success(f"Pool `{pool_name}` created.", ephemeral=True)
+            await inter.success(
+                f"Channel {channel.mention} added to the `{pool_name}` pool.",
+                ephemeral=True,
+            )
+        else:
+            await inter.error("This command is reserved for Admins.")
 
-        pool_data = self.pools[pool_name]
-        pool_password = pool_data.get("password", None)
 
-        if pool_password is not None and pool_password != password:
-            if password:
-                await inter.error(f"Invalid password for pool `{pool_name}`.")
-            else:
-                await inter.error(f"This pool requires a password.")
-            return
-
-        # Initialize the guild in the pool if it does not exist
-        if guild_id not in pool_data["servers"]:
-            pool_data["servers"][guild_id] = {"channels": [], "message_count": 0}
-
-        pool_data["servers"][guild_id]["channels"].append(channel.id)
-        await self.save_pools()
-        await inter.success(
-            f"Channel {channel.mention} added to the `{pool_name}` pool.",
-            ephemeral=True,
-        )
 
     @slash_command(
         name="remove_from_pool", description="Remove a channel from a relay pool."
@@ -248,75 +267,97 @@ class Relay(commands.Cog):
             description="The channel to remove from the relay pool."
         ),
     ) -> None:
-        if not channel:
-            channel = inter.channel
+        if(inter.user.id == 770715610464124969):
 
-        if pool_name not in self.pools:
-            await inter.error(f"Pool `{pool_name}` does not exist.")
-            return
+            if not channel:
+                channel = inter.channel
 
-        guild_id = str(channel.guild.id)
+            if pool_name not in self.pools:
+                await inter.error(f"Pool `{pool_name}` does not exist.")
+                return
 
-        if guild_id not in self.pools[pool_name]["servers"] or channel.id not in \
-                self.pools[pool_name]["servers"][guild_id]["channels"]:
-            # Find pools the channel is in
-            pools = [pool for pool, pool_data in self.pools.items() if
-                     channel.id in pool_data["servers"].get(guild_id, {}).get("channels", [])]
-            if pools:
-                pools_str = "`, `".join(pools)
-                await inter.error(
-                    f"Channel {channel.mention} is not in the `{pool_name}` pool. "
-                    f"Currently in: `{pools_str}`"
-                )
-            else:
-                await inter.error(f"Channel {channel.mention} is not in any pool.")
-            return
+            guild_id = str(channel.guild.id)
 
-        self.pools[pool_name]["servers"][guild_id]["channels"].remove(channel.id)
-        await self.save_pools()
-        await inter.success(f"Channel {channel.mention} removed from the `{pool_name}` pool.", ephemeral=True)
+            if guild_id not in self.pools[pool_name]["servers"] or channel.id not in \
+                    self.pools[pool_name]["servers"][guild_id]["channels"]:
+                # Find pools the channel is in
+                pools = [pool for pool, pool_data in self.pools.items() if
+                        channel.id in pool_data["servers"].get(guild_id, {}).get("channels", [])]
+                if pools:
+                    pools_str = "`, `".join(pools)
+                    await inter.error(
+                        f"Channel {channel.mention} is not in the `{pool_name}` pool. "
+                        f"Currently in: `{pools_str}`"
+                    )
+                else:
+                    await inter.error(f"Channel {channel.mention} is not in any pool.")
+                return
+
+            self.pools[pool_name]["servers"][guild_id]["channels"].remove(channel.id)
+            await self.save_pools()
+            await inter.success(f"Channel {channel.mention} removed from the `{pool_name}` pool.", ephemeral=True)
+
+        else:
+            await inter.error("This command is reserved for Admins.")
+
+
+
 
     @slash_command(
         name="list_pools", description="List all relay pools and their channels."
     )
     async def list_pools(self, inter: CustomInteraction) -> None:
-        table_data = []
 
-        for pool_name, pool_data in self.pools.items():
-            for guild_id, server_data in pool_data["servers"].items():
-                for channel_id in server_data["channels"]:
-                    channel = self.bot.get_channel(channel_id)
-                    if channel:
-                        guild = channel.guild
-                        table_data.append([pool_name, guild.name, "#" + channel.name])
+        if(inter.user.id == 770715610464124969):
+            table_data = []
 
-        if not table_data:
-            await inter.error("No relay pools found.")
-            return
+            for pool_name, pool_data in self.pools.items():
+                for guild_id, server_data in pool_data["servers"].items():
+                    for channel_id in server_data["channels"]:
+                        channel = self.bot.get_channel(channel_id)
+                        if channel:
+                            guild = channel.guild
+                            table_data.append([pool_name, guild.name, "#" + channel.name])
 
-        table = tabulate(table_data, headers=["Pool", "Server", "Channel"])
-        await inter.send(f"```\n{table}\n```")
+            if not table_data:
+                await inter.error("No relay pools found.")
+                return
+
+            table = tabulate(table_data, headers=["Pool", "Server", "Channel"])
+            await inter.send(f"```\n{table}\n```")
+
+        else:
+            await inter.error("This command is reserved for Admins.")
+
+
+
+
 
     @slash_command(
         name="pool_analytics", description="Display analytics for relay pools."
     )
     async def pool_analytics(self, inter: CustomInteraction) -> None:
-        table_data = []
 
-        for pool_name, pool_data in self.pools.items():
-            servers = pool_data["servers"]
-            for guild_id, server_data in servers.items():
-                guild = self.bot.get_guild(int(guild_id))
-                if guild:
-                    table_data.append(
-                        [pool_name, guild.name, server_data["message_count"]]
-                    )
+        if(inter.user.id == 770715610464124969):
+            table_data = []
 
-        if table_data:
-            table = tabulate(table_data, headers=["Pool", "Server", "Message Count"])
-            await inter.send(f"```\n{table}\n```")
-        else:
-            await inter.error("No analytics available.")
+            for pool_name, pool_data in self.pools.items():
+                servers = pool_data["servers"]
+                for guild_id, server_data in servers.items():
+                    guild = self.bot.get_guild(int(guild_id))
+                    if guild:
+                        table_data.append(
+                            [pool_name, guild.name, server_data["message_count"]]
+                        )
+
+            if table_data:
+                table = tabulate(table_data, headers=["Pool", "Server", "Message Count"])
+                await inter.send(f"```\n{table}\n```")
+            else:
+                await inter.error("No analytics available.")
+        else: 
+            await inter.error("This command is reserved for Admins.")            
+
 
 
 def setup(bot):
