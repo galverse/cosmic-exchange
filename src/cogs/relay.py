@@ -128,10 +128,18 @@ class Relay(commands.Cog):
                     channel = self.bot.get_channel(channel_id)
                     if channel:
                         webhook = await self.bot.find_or_create_webhook(channel, "RelayBot")
+                        
+                        # Check for any attachments in the message
+                        files = []
+                        for attachment in message.attachments:
+                            file = await attachment.to_file()
+                            files.append(file)
+
                         relayed_message = await webhook.send(
                             message.content,
                             username=f"{message.author.display_name} · {message.guild.name}",
                             avatar_url=message.author.avatar.url,
+                            files=files,
                             wait=True
                         )
 
